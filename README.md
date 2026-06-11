@@ -9,11 +9,11 @@ Laravel client for [docling-serve](https://github.com/docling-project/docling-se
 
 ## Requirements
 
-| Requirement | Notes |
-|---|---|
-| PHP ^8.1, Laravel 10/11/12 | |
-| docling-serve **>= 1.0.0** | The package uses the `/v1` API (`/v1/convert/source` with the unified `sources` payload), which 0.x deployments (`/v1alpha`) do not have. Verify your deployment supports the `rapidocr` OCR engine and `dlparse_v4` PDF backend, or switch via `DOCLING_OCR_ENGINE` / `DOCLING_PDF_BACKEND` (the standard docling-serve image ships with `easyocr`). |
-| `poppler-utils` on the app server | Only needed for PDFs longer than `pages_per_chunk` pages. Provides `pdfinfo`, `pdfseparate`, `pdfunite`. |
+| Requirement                       | Notes                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PHP ^8.1, Laravel 10/11/12        |                                                                                                                                                                                                                                                                                                                                                       |
+| docling-serve **>= 1.0.0**        | The package uses the `/v1` API (`/v1/convert/source` with the unified `sources` payload), which 0.x deployments (`/v1alpha`) do not have. Verify your deployment supports the `rapidocr` OCR engine and `dlparse_v4` PDF backend, or switch via `DOCLING_OCR_ENGINE` / `DOCLING_PDF_BACKEND` (the standard docling-serve image ships with `easyocr`). |
+| `poppler-utils` on the app server | Only needed for PDFs longer than `pages_per_chunk` pages. Provides `pdfinfo`, `pdfseparate`, `pdfunite`.                                                                                                                                                                                                                                              |
 
 Installing poppler-utils:
 
@@ -140,20 +140,20 @@ class ProcessDocument implements ShouldQueue
 
 All keys in `config/docling.php`:
 
-| Key | Env | Default | Purpose |
-|---|---|---|---|
-| `base_url` | `DOCLING_BASE_URL` | `http://localhost:5001` | docling-serve URL |
-| `api_key` | `DOCLING_API_KEY` | `null` | Sent as `X-Api-Key` header |
-| `log_channel` | `DOCLING_LOG_CHANNEL` | `docling` | Auto-registered if undefined; `null` = app default channel |
-| `timeout` | `DOCLING_TIMEOUT` | `300` | Seconds per conversion request |
-| `connect_timeout` | `DOCLING_CONNECT_TIMEOUT` | `10` | Seconds to establish the connection |
-| `health_timeout` | `DOCLING_HEALTH_TIMEOUT` | `2` | Seconds for the pre-flight `/health` probe |
-| `pages_per_chunk` | `DOCLING_PAGES_PER_CHUNK` | `3` | PDFs above this page count are split |
-| `temp_dir` | `DOCLING_TEMP_DIR` | `storage/app/docling-tmp` | Where PDF chunks are written |
-| `max_file_size` | `DOCLING_MAX_FILE_SIZE` | `52428800` (50 MB) | Files above this are rejected before being read into memory; `0` disables |
-| `options.ocr_engine` | `DOCLING_OCR_ENGINE` | `rapidocr` | OCR engine on the docling-serve side |
-| `options.pdf_backend` | `DOCLING_PDF_BACKEND` | `dlparse_v4` | PDF parser backend |
-| `options.*` (other) | — | see config | Remaining conversion options; publish the config to change them |
+| Key                   | Env                       | Default                   | Purpose                                                                   |
+| --------------------- | ------------------------- | ------------------------- | ------------------------------------------------------------------------- |
+| `base_url`            | `DOCLING_BASE_URL`        | `http://localhost:5001`   | docling-serve URL                                                         |
+| `api_key`             | `DOCLING_API_KEY`         | `null`                    | Sent as `X-Api-Key` header                                                |
+| `log_channel`         | `DOCLING_LOG_CHANNEL`     | `docling`                 | Auto-registered if undefined; `null` = app default channel                |
+| `timeout`             | `DOCLING_TIMEOUT`         | `300`                     | Seconds per conversion request                                            |
+| `connect_timeout`     | `DOCLING_CONNECT_TIMEOUT` | `10`                      | Seconds to establish the connection                                       |
+| `health_timeout`      | `DOCLING_HEALTH_TIMEOUT`  | `2`                       | Seconds for the pre-flight `/health` probe                                |
+| `pages_per_chunk`     | `DOCLING_PAGES_PER_CHUNK` | `3`                       | PDFs above this page count are split                                      |
+| `temp_dir`            | `DOCLING_TEMP_DIR`        | `storage/app/docling-tmp` | Where PDF chunks are written                                              |
+| `max_file_size`       | `DOCLING_MAX_FILE_SIZE`   | `52428800` (50 MB)        | Files above this are rejected before being read into memory; `0` disables |
+| `options.ocr_engine`  | `DOCLING_OCR_ENGINE`      | `rapidocr`                | OCR engine on the docling-serve side                                      |
+| `options.pdf_backend` | `DOCLING_PDF_BACKEND`     | `dlparse_v4`              | PDF parser backend                                                        |
+| `options.*` (other)   | —                         | see config                | Remaining conversion options; publish the config to change them           |
 
 ## Caveats
 
