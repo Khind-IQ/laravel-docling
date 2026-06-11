@@ -30,7 +30,9 @@ class DoclingService
         }
 
         try {
-            $response = Http::timeout($this->healthTimeout())->get("{$baseUrl}/health");
+            $response = Http::timeout($this->healthTimeout())
+                ->withHeaders($this->authHeaders())
+                ->get("{$baseUrl}/health");
 
             return $response->successful();
         } catch (\Exception) {
@@ -53,7 +55,7 @@ class DoclingService
             if (! $this->isConfigured()) {
                 $this->log()->warning('Docling service is not properly configured.', [
                     'base_url' => $this->baseUrl(),
-                    'api_key_set' => ! empty($this->apiKey()),
+                    'auth_set' => $this->authHeaders() !== [],
                 ]);
 
                 return [
@@ -141,6 +143,34 @@ class DoclingService
         $key = $this->configValue('api_key');
 
         return $key !== null ? (string) $key : null;
+    }
+
+    private function bearerToken(): ?string
+    {
+        $token = $this->configValue('bearer_token');
+
+        return $token !== null ? (string) $token : null;
+    }
+
+    /**
+     * Auth headers applied to every request, including the /health probe.
+     * A reverse proxy guarding docling may reject /health without them.
+     *
+     * @return array<string, string>
+     */
+    private function authHeaders(): array
+    {
+        $headers = [];
+
+        if (! empty($this->apiKey())) {
+            $headers['X-Api-Key'] = $this->apiKey();
+        }
+
+        if (! empty($this->bearerToken())) {
+            $headers['Authorization'] = 'Bearer ' . $this->bearerToken();
+        }
+
+        return $headers;
     }
 
     private function logChannel(): ?string
@@ -651,18 +681,12 @@ class DoclingService
                 ],
             ];
 
-            $headers = [];
-            $apiKey = $this->apiKey();
-            if (! empty($apiKey)) {
-                $headers['X-Api-Key'] = $apiKey;
-            }
-
             /**
              * @var \Illuminate\Http\Client\Response $response
              */
             $response = Http::timeout($this->timeout())
                 ->connectTimeout($this->connectTimeout())
-                ->withHeaders($headers)
+                ->withHeaders($this->authHeaders())
                 ->post("{$this->baseUrl()}/v1/convert/source", $payload);
 
             if ($response->failed()) {

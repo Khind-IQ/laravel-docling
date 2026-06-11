@@ -56,6 +56,28 @@ DOCLING_BASE_URL=http://your-docling-server:5001
 DOCLING_API_KEY=your-api-key   # omit if the server is unauthenticated
 ```
 
+### Authentication
+
+The package supports two independent auth schemes; set whichever your deployment uses (both, if both apply):
+
+```dotenv
+# Native docling-serve auth — sent as the "X-Api-Key" header:
+DOCLING_API_KEY=your-api-key
+
+# Reverse-proxy auth — sent as "Authorization: Bearer <token>":
+DOCLING_BEARER_TOKEN=your-token
+```
+
+Both headers are sent on **every** request, including the `/health` probe — so a proxy that guards `/health` won't reject the pre-flight check. Leave both empty for an unauthenticated server.
+
+**Behind a reverse proxy that strips a path prefix?** Put the prefix in the base URL. For example, with nginx routing `location /docling/ { proxy_pass http://localhost:5001/; }` plus a bearer check:
+
+```dotenv
+DOCLING_BASE_URL=https://your-host/docling   # prefix is prepended to /health and /v1/convert/source
+DOCLING_BEARER_TOKEN=your-token
+# DOCLING_API_KEY left unset — docling-serve itself is open; the proxy is the gatekeeper
+```
+
 That's it — no config file or log channel setup required. To customize defaults (OCR engine, languages, chunk size, timeouts), publish the config:
 
 ```bash
@@ -142,8 +164,9 @@ All keys in `config/docling.php`:
 
 | Key                   | Env                       | Default                   | Purpose                                                                   |
 | --------------------- | ------------------------- | ------------------------- | ------------------------------------------------------------------------- |
-| `base_url`            | `DOCLING_BASE_URL`        | `http://localhost:5001`   | docling-serve URL                                                         |
-| `api_key`             | `DOCLING_API_KEY`         | `null`                    | Sent as `X-Api-Key` header                                                |
+| `base_url`            | `DOCLING_BASE_URL`        | `http://localhost:5001`   | docling-serve URL; include any reverse-proxy path prefix                  |
+| `api_key`             | `DOCLING_API_KEY`         | `null`                    | Sent as `X-Api-Key` header (native docling-serve auth)                    |
+| `bearer_token`        | `DOCLING_BEARER_TOKEN`    | `null`                    | Sent as `Authorization: Bearer <token>` (e.g. reverse-proxy auth)         |
 | `log_channel`         | `DOCLING_LOG_CHANNEL`     | `docling`                 | Auto-registered if undefined; `null` = app default channel                |
 | `timeout`             | `DOCLING_TIMEOUT`         | `300`                     | Seconds per conversion request                                            |
 | `connect_timeout`     | `DOCLING_CONNECT_TIMEOUT` | `10`                      | Seconds to establish the connection                                       |
