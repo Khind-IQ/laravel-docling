@@ -7,15 +7,36 @@ return [
     | Docling Server
     |--------------------------------------------------------------------------
     |
-    | Base URL of your docling-serve deployment and the API key it expects
-    | (sent as the X-Api-Key header). Leave the key empty when the server
-    | is unauthenticated.
+    | Base URL of your docling-serve deployment. If docling sits behind a
+    | reverse proxy that strips a path prefix, include that prefix here
+    | (e.g. https://host/docling) — it is prepended to /health and
+    | /v1/convert/source.
     |
     */
 
     'base_url' => env('DOCLING_BASE_URL', 'http://localhost:5001'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    |
+    | Two independent schemes, applied to every request (including the
+    | /health probe). Set whichever your deployment uses; leave both empty
+    | for an unauthenticated server.
+    |
+    |  - api_key      -> sent as the "X-Api-Key" header (native docling-serve
+    |                    auth, DOCLING_SERVE_API_KEY).
+    |  - bearer_token -> sent as "Authorization: Bearer <token>" (typical when
+    |                    a reverse proxy in front of docling guards it).
+    |
+    | If both are set, both headers are sent.
+    |
+    */
+
     'api_key' => env('DOCLING_API_KEY'),
+
+    'bearer_token' => env('DOCLING_BEARER_TOKEN'),
 
     /*
     |--------------------------------------------------------------------------

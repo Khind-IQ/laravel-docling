@@ -215,6 +215,69 @@ class DoclingServiceTest extends TestCase
         $this->assertFalse($service->isConfigured());
     }
 
+    public function test_bearer_token_is_sent_on_both_health_and_convert(): void
+    {
+        config()->set('docling.api_key', null);
+        config()->set('docling.bearer_token', 'tok-123');
+
+        Http::fake([
+            'docling.test/health' => Http::response('ok'),
+            'docling.test/v1/convert/source' => Http::response([
+                'document' => ['filename' => 'doc.txt', 'md_content' => 'x', 'json_content' => []],
+            ]),
+        ]);
+
+        $result = Docling::OCRProcessing($this->fixture('doc.txt', 'hello'));
+
+        $this->assertTrue($result['success']);
+
+        // The /health probe must carry auth — a reverse proxy guards it too.
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/health')
+            && $request->hasHeader('Authorization', 'Bearer tok-123'));
+
+        // Bearer-only deployment: no X-Api-Key on the conversion request.
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/v1/convert/source')
+            && $request->hasHeader('Authorization', 'Bearer tok-123')
+            && ! $request->hasHeader('X-Api-Key'));
+    }
+
+    public function test_both_auth_headers_are_sent_when_both_configured(): void
+    {
+        config()->set('docling.api_key', 'key-abc');
+        config()->set('docling.bearer_token', 'tok-123');
+
+        Http::fake([
+            'docling.test/health' => Http::response('ok'),
+            'docling.test/v1/convert/source' => Http::response([
+                'document' => ['filename' => 'doc.txt', 'md_content' => 'x', 'json_content' => []],
+            ]),
+        ]);
+
+        Docling::OCRProcessing($this->fixture('doc.txt', 'hello'));
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/v1/convert/source')
+            && $request->hasHeader('X-Api-Key', 'key-abc')
+            && $request->hasHeader('Authorization', 'Bearer tok-123'));
+    }
+
+    public function test_base_url_path_prefix_is_preserved(): void
+    {
+        config()->set('docling.base_url', 'https://ie.khind.com/docling');
+        config()->set('docling.bearer_token', 'tok-123');
+
+        Http::fake([
+            'ie.khind.com/docling/health' => Http::response('ok'),
+            'ie.khind.com/docling/v1/convert/source' => Http::response([
+                'document' => ['filename' => 'doc.txt', 'md_content' => 'x', 'json_content' => []],
+            ]),
+        ]);
+
+        $result = Docling::OCRProcessing($this->fixture('doc.txt', 'hello'));
+
+        $this->assertTrue($result['success']);
+        Http::assertSent(fn ($request) => $request->url() === 'https://ie.khind.com/docling/v1/convert/source');
+    }
+
     public function test_http_200_with_failure_status_is_not_success(): void
     {
         Http::fake([
