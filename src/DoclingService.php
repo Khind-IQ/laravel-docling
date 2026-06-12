@@ -112,6 +112,13 @@ class DoclingService
                 ];
             }
 
+            // Async path: submit the whole document as one docling task and poll.
+            // Avoids per-request response caps (e.g. Cloudflare's ~100s 524) and
+            // the poppler page-splitting entirely — docling paginates server-side.
+            if ($this->async()) {
+                return $this->processAsync($documentPath, $options);
+            }
+
             $mimeType = File::mimeType($documentPath);
 
             if ($mimeType === 'application/pdf') {
@@ -199,6 +206,21 @@ class DoclingService
     private function timeout(): int
     {
         return (int) $this->configValue('timeout', 300);
+    }
+
+    private function async(): bool
+    {
+        return (bool) $this->configValue('async', false);
+    }
+
+    private function pollInterval(): int
+    {
+        return max(1, (int) $this->configValue('poll_interval', 3));
+    }
+
+    private function asyncTimeout(): int
+    {
+        return (int) $this->configValue('async_timeout', 1800);
     }
 
     private function connectTimeout(): int
@@ -655,32 +677,232 @@ class DoclingService
     /**
      * Process a single document (used for both regular and chunked processing)
      */
+    /**
+     * Mime types docling-serve can convert (application/json must be
+     * DoclingDocument JSON).
+     *
+     * @return list<string>
+     */
+    private function supportedMimeTypes(): array
+    {
+        return [
+            'text/csv',
+            'text/plain',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'text/html',
+            'image/jpeg',
+            'image/png',
+            'image/tiff',
+            'image/gif',
+            'image/bmp',
+            'image/webp',
+            'application/json',
+            'text/markdown',
+            'application/pdf',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ];
+    }
+
+    /**
+     * Turn a docling-serve convert response (sync /v1/convert/source or async
+     * /v1/result/{id}) into the package's standard envelope. docling replies 200
+     * even when the conversion itself failed; the body's status carries the real
+     * outcome.
+     *
+     * @return array{success: bool, message: string, data: ?array}
+     */
+    private function interpretConvertResponse(?array $responseJson, string $documentPath): array
+    {
+        $conversionStatus = is_array($responseJson) ? ($responseJson['status'] ?? null) : null;
+
+        if (! is_array($responseJson) || ! isset($responseJson['document']) || in_array($conversionStatus, ['failure', 'skipped'], true)) {
+            $this->log()->error('Docling conversion was not successful.', [
+                'document_path' => $documentPath,
+                'conversion_status' => $conversionStatus,
+                'errors' => is_array($responseJson) ? ($responseJson['errors'] ?? null) : null,
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'Docling conversion was not successful'
+                    . ($conversionStatus ? " (status: {$conversionStatus})." : '.'),
+                'data' => $responseJson,
+            ];
+        }
+
+        $responseData = [
+            'filename' => $responseJson['document']['filename'] ?? null,
+            'text' => null,
+            'json_content' => $responseJson['document']['json_content'] ?? null,
+            'md_content' => $responseJson['document']['md_content'] ?? null,
+        ];
+
+        if (isset($responseData['json_content'], $responseData['md_content'])) {
+            $responseData['text'] = $this->processImagePlaceholders($responseData['md_content'], $responseData['json_content']);
+        }
+
+        return [
+            'success' => true,
+            'message' => 'OCR processing completed successfully.',
+            'data' => $responseData,
+        ];
+    }
+
+    /**
+     * Convert the whole document via docling-serve's async API: submit one task,
+     * poll until terminal, then fetch the result. Every HTTP request returns
+     * quickly, so the conversion is never cut by a reverse-proxy / CDN response
+     * cap (e.g. Cloudflare's ~100s). No poppler page-splitting — docling
+     * paginates the whole document server-side.
+     *
+     * @return array{success: bool, message: string, data: ?array}
+     */
+    private function processAsync(string $documentPath, array $options = []): array
+    {
+        try {
+            $mimeType = File::mimeType($documentPath);
+
+            if (! in_array($mimeType, $this->supportedMimeTypes(), true)) {
+                return [
+                    'success' => false,
+                    'message' => 'Unsupported document mime type for OCR processing.',
+                    'data' => null,
+                ];
+            }
+
+            $payload = [
+                'options' => array_replace($this->options(), $options),
+                'sources' => [
+                    [
+                        'base64_string' => base64_encode(File::get($documentPath)),
+                        'filename' => basename($documentPath),
+                        'kind' => 'file',
+                    ],
+                ],
+            ];
+
+            $submit = Http::timeout($this->timeout())
+                ->connectTimeout($this->connectTimeout())
+                ->withHeaders($this->authHeaders())
+                ->post("{$this->baseUrl()}/v1/convert/source/async", $payload);
+
+            if ($submit->failed()) {
+                $this->log()->error('Async submit request failed.', [
+                    'document_path' => $documentPath,
+                    'status' => $submit->status(),
+                    'response' => $submit->body(),
+                ]);
+
+                return [
+                    'success' => false,
+                    'message' => 'Async submit request failed.',
+                    'data' => $submit->json(),
+                ];
+            }
+
+            $taskId = $submit->json('task_id');
+
+            if (! $taskId) {
+                return [
+                    'success' => false,
+                    'message' => 'Async submit returned no task id.',
+                    'data' => $submit->json(),
+                ];
+            }
+
+            // Poll until terminal or the overall ceiling. The poll endpoint
+            // long-polls up to `wait` seconds, so each request stays well under
+            // any proxy response cap.
+            $status = (string) ($submit->json('task_status') ?? 'pending');
+            $deadline = time() + $this->asyncTimeout();
+
+            while (! in_array($status, ['success', 'failure', 'partial_success'], true)) {
+                if (time() >= $deadline) {
+                    $this->log()->error('Async conversion timed out.', [
+                        'document_path' => $documentPath,
+                        'task_id' => $taskId,
+                        'last_status' => $status,
+                        'async_timeout' => $this->asyncTimeout(),
+                    ]);
+
+                    return [
+                        'success' => false,
+                        'message' => "Async conversion timed out after {$this->asyncTimeout()}s (last status: {$status}).",
+                        'data' => null,
+                    ];
+                }
+
+                sleep($this->pollInterval());
+
+                $poll = Http::timeout($this->timeout())
+                    ->withHeaders($this->authHeaders())
+                    ->get("{$this->baseUrl()}/v1/status/poll/{$taskId}", ['wait' => $this->pollInterval()]);
+
+                if ($poll->failed()) {
+                    $this->log()->warning('Async poll request failed; retrying.', [
+                        'task_id' => $taskId,
+                        'status' => $poll->status(),
+                    ]);
+
+                    continue;
+                }
+
+                $status = (string) ($poll->json('task_status') ?? $status);
+            }
+
+            if ($status === 'failure') {
+                $this->log()->error('Async conversion failed.', [
+                    'document_path' => $documentPath,
+                    'task_id' => $taskId,
+                ]);
+
+                return [
+                    'success' => false,
+                    'message' => 'Docling async conversion failed.',
+                    'data' => null,
+                ];
+            }
+
+            $result = Http::timeout($this->timeout())
+                ->withHeaders($this->authHeaders())
+                ->get("{$this->baseUrl()}/v1/result/{$taskId}");
+
+            if ($result->failed()) {
+                $this->log()->error('Async result request failed.', [
+                    'document_path' => $documentPath,
+                    'task_id' => $taskId,
+                    'status' => $result->status(),
+                ]);
+
+                return [
+                    'success' => false,
+                    'message' => 'Async result request failed.',
+                    'data' => $result->json(),
+                ];
+            }
+
+            return $this->interpretConvertResponse($result->json(), $documentPath);
+        } catch (\Exception $e) {
+            $this->log()->error('Async document processing failed.', [
+                'document_path' => $documentPath,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'Processing failed: ' . $e->getMessage(),
+                'data' => null,
+            ];
+        }
+    }
+
     private function processSingleDocument(string $documentPath, array $options = []): array
     {
         try {
             $mimeType = File::mimeType($documentPath);
 
-            // Mirrors the formats docling-serve can actually convert; note
-            // application/json must be DoclingDocument JSON (json_docling).
-            $supportedMimeTypes = [
-                'text/csv',
-                'text/plain',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                'text/html',
-                'image/jpeg',
-                'image/png',
-                'image/tiff',
-                'image/gif',
-                'image/bmp',
-                'image/webp',
-                'application/json',
-                'text/markdown',
-                'application/pdf',
-                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            ];
-
-            if (! in_array($mimeType, $supportedMimeTypes, true)) {
+            if (! in_array($mimeType, $this->supportedMimeTypes(), true)) {
                 return [
                     'success' => false,
                     'message' => 'Unsupported document mime type for OCR processing.',
@@ -721,42 +943,7 @@ class DoclingService
                 ];
             }
 
-            $responseJson = $response->json();
-            $conversionStatus = $responseJson['status'] ?? null;
-
-            // docling-serve replies 200 even when the conversion itself
-            // failed; the body's status field carries the real outcome.
-            if (! isset($responseJson['document']) || in_array($conversionStatus, ['failure', 'skipped'], true)) {
-                $this->log()->error('Docling conversion was not successful.', [
-                    'document_path' => $documentPath,
-                    'conversion_status' => $conversionStatus,
-                    'errors' => $responseJson['errors'] ?? null,
-                ]);
-
-                return [
-                    'success' => false,
-                    'message' => 'Docling conversion was not successful'
-                        . ($conversionStatus ? " (status: {$conversionStatus})." : '.'),
-                    'data' => $responseJson,
-                ];
-            }
-
-            $responseData = [
-                'filename' => $responseJson['document']['filename'] ?? null,
-                'text' => null,
-                'json_content' => $responseJson['document']['json_content'] ?? null,
-                'md_content' => $responseJson['document']['md_content'] ?? null,
-            ];
-
-            if (isset($responseData['json_content'], $responseData['md_content'])) {
-                $responseData['text'] = $this->processImagePlaceholders($responseData['md_content'], $responseData['json_content']);
-            }
-
-            return [
-                'success' => true,
-                'message' => 'OCR processing completed successfully.',
-                'data' => $responseData,
-            ];
+            return $this->interpretConvertResponse($response->json(), $documentPath);
         } catch (\Exception $e) {
             $this->log()->error('Single document processing failed.', [
                 'document_path' => $documentPath,

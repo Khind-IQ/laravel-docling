@@ -71,6 +71,30 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Async Conversion
+    |--------------------------------------------------------------------------
+    |
+    | When 'async' is true, OCRProcessing submits the whole document to
+    | docling-serve's async API (/v1/convert/source/async) and polls for the
+    | result instead of using the blocking /v1/convert/source endpoint. Every
+    | HTTP request returns quickly, so conversion is never cut by a reverse
+    | proxy / CDN response cap (e.g. Cloudflare's ~100s 524) — the conversion
+    | itself may take as long as it needs. Async also skips poppler page
+    | splitting; docling paginates the whole document server-side.
+    |
+    | 'poll_interval' is seconds between status polls; 'async_timeout' is the
+    | overall ceiling for one document.
+    |
+    */
+
+    'async' => (bool) env('DOCLING_ASYNC', false),
+
+    'poll_interval' => (int) env('DOCLING_POLL_INTERVAL', 3),
+
+    'async_timeout' => (int) env('DOCLING_ASYNC_TIMEOUT', 1800),
+
+    /*
+    |--------------------------------------------------------------------------
     | Large-PDF Chunking
     |--------------------------------------------------------------------------
     |
