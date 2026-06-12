@@ -26,6 +26,8 @@ class DoclingService
         $baseUrl = $this->baseUrl();
 
         if ($baseUrl === '') {
+            $this->log()->warning('Docling base_url is not set.');
+
             return false;
         }
 
@@ -34,8 +36,24 @@ class DoclingService
                 ->withHeaders($this->authHeaders())
                 ->get("{$baseUrl}/health");
 
+            if (! $response->successful()) {
+                // A 401 here on an otherwise-working server usually means the
+                // base_url scheme triggered an http->https redirect that
+                // dropped the auth header — point base_url at the final scheme.
+                $this->log()->warning('Docling health check returned a non-success status.', [
+                    'url' => "{$baseUrl}/health",
+                    'status' => $response->status(),
+                    'body' => mb_substr($response->body(), 0, 500),
+                ]);
+            }
+
             return $response->successful();
-        } catch (\Exception) {
+        } catch (\Exception $e) {
+            $this->log()->warning('Docling health check failed to connect.', [
+                'url' => "{$baseUrl}/health",
+                'error' => $e->getMessage(),
+            ]);
+
             return false;
         }
     }

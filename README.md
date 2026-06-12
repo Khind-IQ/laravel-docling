@@ -70,6 +70,8 @@ DOCLING_BEARER_TOKEN=your-token
 
 Both headers are sent on **every** request, including the `/health` probe — so a proxy that guards `/health` won't reject the pre-flight check. Leave both empty for an unauthenticated server.
 
+> **Match the scheme your server actually serves.** If docling sits behind TLS/Cloudflare, use `https://` in the base URL. An `http://` URL that `301`-redirects to `https://` will drop the `Authorization` header across the redirect (Guzzle strips it on a scheme/host/port change), so the request arrives unauthenticated and gets a `401` — which surfaces as "Docling service is not properly configured." The reason is logged to the `docling` channel.
+
 **Behind a reverse proxy that strips a path prefix?** Put the prefix in the base URL. For example, with nginx routing `location /docling/ { proxy_pass http://localhost:5001/; }` plus a bearer check:
 
 ```dotenv
